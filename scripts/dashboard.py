@@ -81,7 +81,7 @@ def write_backup(value: object) -> dict:
     return backup
 
 
-def run_backup() -> int:
+def backup_to_github() -> str:
     read_backup()
     git = shutil.which("git")
     if not git:
@@ -90,43 +90,47 @@ def run_backup() -> int:
         if candidates:
             git = str(candidates[0])
     if not git:
-        print("Git was not found. Install Git for Windows or GitHub Desktop, then reopen VS Code.", file=sys.stderr)
-        return 1
+        raise RuntimeError("Git was not found. Install Git for Windows or GitHub Desktop, then try again.")
 
     def run_git(*arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
             [git, "-C", str(ROOT), *arguments],
-            check=False, text=True, capture_output=True
+            check=False, text=True, capture_output=True, timeout=120
         )
         if check and result.returncode:
             message = result.stderr.strip() or result.stdout.strip()
             raise RuntimeError(message or f"git {' '.join(arguments)} failed.")
         return result
 
+    root = Path(run_git("rev-parse", "--show-toplevel").stdout.strip()).resolve()
+    if root != ROOT.resolve():
+        raise RuntimeError("The dashboard folder is not the Git repository root.")
+    branch = run_git("branch", "--show-current").stdout.strip()
+    if not branch:
+        raise RuntimeError("Git is in a detached-HEAD state. Switch to your main branch in VS Code.")
+
+    run_git("add", "--", "data/usage.json")
+    changed = run_git("diff", "--cached", "--quiet", "--", "data/usage.json", check=False)
+    if changed.returncode == 0:
+        message = "Usage is already backed up."
+    elif changed.returncode == 1:
+        run_git("commit", "-m", "Update LLM usage backup", "--", "data/usage.json")
+        message = f"Committed usage on {branch}."
+    else:
+        raise RuntimeError("Could not check the staged usage backup.")
+
+    run_git("push", "origin", f"HEAD:refs/heads/{branch}")
+    return f"{message} GitHub is up to date."
+
+
+def run_backup() -> int:
     try:
-        root = Path(run_git("rev-parse", "--show-toplevel").stdout.strip()).resolve()
-        if root != ROOT.resolve():
-            raise RuntimeError("The dashboard folder is not the Git repository root.")
-        branch = run_git("branch", "--show-current").stdout.strip()
-        if not branch:
-            raise RuntimeError("Git is in a detached-HEAD state. Switch to your main branch in VS Code.")
-
-        run_git("add", "--", "data/usage.json")
-        changed = run_git("diff", "--cached", "--quiet", "--", "data/usage.json", check=False)
-        if changed.returncode == 0:
-            print("No new usage changes to commit.")
-        elif changed.returncode == 1:
-            run_git("commit", "-m", "Update LLM usage backup", "--", "data/usage.json")
-            print(f"Committed data/usage.json on {branch}.")
-        else:
-            raise RuntimeError("Could not check the staged usage backup.")
-
-        run_git("push", "origin", f"HEAD:refs/heads/{branch}")
-        print("Backed up to GitHub. GitHub Actions will update the dashboard after the push.")
+        print(backup_to_github())
         return 0
-    except RuntimeError as error:
-        print(f"Backup failed: {error}", file=sys.stderr)
-        if "not found" in str(error).lower() or "authentication" in str(error).lower():
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        message = error.stderr.strip() if isinstance(error, subprocess.TimeoutExpired) and error.stderr else str(error)
+        print(f"Backup failed: {message}", file=sys.stderr)
+        if "not found" in message.lower() or "authentication" in message.lower():
             print("Sign in to GitHub in VS Code or Git Credential Manager, then try again.", file=sys.stderr)
         return 1
 
@@ -185,16 +189,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:
-        if urlsplit(self.path).path != "/api/usage":
+        request_path = urlsplit(self.path).path
+        if request_path not in ("/api/usage", "/api/backup"):
             self.send_error(404)
             return
         origin = self.headers.get("Origin")
-        if origin:
-            origin_host = urlsplit(origin).hostname
-            origin_port = urlsplit(origin).port or 80
-            if origin_host not in ("localhost", "127.0.0.1") or origin_port != self.server.server_port:
-                self.send_error(403, "Usage can only be saved from the local dashboard.")
+        origin_parts = urlsplit(origin or "")
+        origin_port = origin_parts.port or (443 if origin_parts.scheme == "https" else 80)
+        if (
+            origin_parts.scheme != "http"
+            or origin_parts.hostname not in ("localhost", "127.0.0.1")
+            or origin_port != self.server.server_port
+        ):
+            self.send_error(403, "Dashboard actions are only allowed from this local dashboard.")
+            return
+        if request_path == "/api/backup":
+            try:
+                message = backup_to_github()
+            except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+                detail = error.stderr.strip() if isinstance(error, subprocess.TimeoutExpired) and error.stderr else str(error)
+                self.send_json({"error": f"Backup failed: {detail}"}, 500)
                 return
+            self.send_json({"message": message})
+            return
         if self.headers.get_content_type() != "application/json":
             self.send_error(415, "Content-Type must be application/json.")
             return

@@ -77,6 +77,7 @@
     .button svg { width: 14px; height: 14px; }
     .button-primary { border-color: var(--lime); background: var(--lime); color: #171a11; font-weight: 700; }
     .button-primary:hover { border-color: #d4ff87; background: #d4ff87; }
+    .button[hidden] { display: none; }
     .button-quiet { height: 29px; padding: 0 9px; color: #aeb1a6; font-size: 10px; }
     .period-chip { padding: 5px 7px; border: 1px solid #34372f; border-radius: 5px; color: #919588; font-size: 8px; white-space: nowrap; }
 
@@ -299,6 +300,7 @@
         <div class="crumb"><span>Workspace</span><span class="crumb-sep">/</span><strong>Overview</strong></div>
         <div class="top-actions">
           <span class="sync-label"><span class="status-dot"></span><span id="connection-label">Dashboard ready</span></span>
+          <button class="button button-primary" id="github-backup-button" type="button" aria-label="Back up usage to GitHub" title="Commit your usage data and push it to GitHub" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M5 14v5a2 2 0 0 0 2 2h14"/></svg>Back up to GitHub</button>
           <button class="button" id="export-button" type="button" title="Export filtered usage as CSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>CSV</button>
           <button class="button" id="backup-button" type="button" title="Download a JSON backup of all usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z"/><path d="M8 9h8m-8 3h8m-8 3h5"/></svg>Backup</button>
           <button class="button" id="restore-button" type="button" title="Restore or merge a JSON backup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0 1 4"/><path d="M20 4v7h-7"/></svg>Restore</button>
@@ -328,7 +330,7 @@
 
         <div class="demo-note" role="note">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></svg>
-          <span><strong>No provider connection.</strong> Use the VS Code task “Promptwise: Open local dashboard” to save runs in this project, then “Promptwise: Back up usage to GitHub” to publish your backup.</span>
+          <span id="storage-callout"><strong>No provider connection.</strong> Log runs in your browser here, or double-click the Promptwise shortcut to save to the project and back up with one click.</span>
           <a href="#activity">Backup info <span aria-hidden="true">→</span></a>
         </div>
 
@@ -510,6 +512,8 @@
           : "Browser dashboard";
       } else {
         $("connection-label").textContent = "Local project";
+        $("github-backup-button").hidden = false;
+        $("storage-callout").innerHTML = "<strong>Local dashboard.</strong> Log runs here; they save in this project. When you want, click <strong>Back up to GitHub</strong> to sync.";
       }
       const inScope = (row) => {
         const date = new Date(row.createdAt);
@@ -758,6 +762,23 @@
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         showToast(`Backed up ${backup.usage.length} usage rows.`);
+      });
+      $("github-backup-button").addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = "Backing up…";
+        try {
+          const response = await fetch("/api/backup", { method: "POST" });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "GitHub backup failed.");
+          showToast(result.message);
+        } catch (error) {
+          console.error("Could not back up usage to GitHub.", error);
+          showToast(error.message || "Could not back up usage to GitHub.");
+        } finally {
+          button.disabled = false;
+          button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M5 14v5a2 2 0 0 0 2 2h14"/></svg>Back up to GitHub`;
+        }
       });
       $("restore-button").addEventListener("click", () => $("backup-file").click());
       $("backup-file").addEventListener("change", async (event) => {
