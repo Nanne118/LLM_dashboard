@@ -284,8 +284,8 @@
       </nav>
       <div class="sidebar-spacer"></div>
       <div class="local-status">
-        <div class="status-top"><span class="status-dot"></span>Browser storage</div>
-        <p>Usage stays on this device</p>
+        <div class="status-top"><span class="status-dot"></span><span id="storage-label">Project data file</span></div>
+        <p id="storage-hint">Local logs save to this repo</p>
       </div>
       <div class="profile">
         <span class="avatar">N</span>
@@ -298,7 +298,7 @@
       <header class="topbar">
         <div class="crumb"><span>Workspace</span><span class="crumb-sep">/</span><strong>Overview</strong></div>
         <div class="top-actions">
-          <span class="sync-label"><span class="status-dot"></span>Static dashboard</span>
+          <span class="sync-label"><span class="status-dot"></span><span id="connection-label">Dashboard ready</span></span>
           <button class="button" id="export-button" type="button" title="Export filtered usage as CSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>CSV</button>
           <button class="button" id="backup-button" type="button" title="Download a JSON backup of all usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z"/><path d="M8 9h8m-8 3h8m-8 3h5"/></svg>Backup</button>
           <button class="button" id="restore-button" type="button" title="Restore or merge a JSON backup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0 1 4"/><path d="M20 4v7h-7"/></svg>Restore</button>
@@ -328,8 +328,8 @@
 
         <div class="demo-note" role="note">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></svg>
-          <span><strong>No provider connection.</strong> Runs you log stay in this browser. Download a JSON backup and commit it to <code>data/usage.json</code> to back it up and show it on GitHub Pages.</span>
-          <a href="#activity">Backup guide <span aria-hidden="true">→</span></a>
+          <span><strong>No provider connection.</strong> Use the VS Code task “Promptwise: Open local dashboard” to save runs in this project, then “Promptwise: Back up usage to GitHub” to publish your backup.</span>
+          <a href="#activity">Backup info <span aria-hidden="true">→</span></a>
         </div>
 
         <section class="metric-grid" aria-label="Usage summary">
@@ -501,6 +501,16 @@
       let showAllActivity = false;
       const $ = (id) => document.getElementById(id);
       const getAllRows = () => mergeRows(committedRows, savedRows);
+      const isLocalDashboard = ["localhost", "127.0.0.1"].includes(location.hostname);
+      if (!isLocalDashboard) {
+        $("storage-label").textContent = "Browser storage";
+        $("storage-hint").textContent = "Local entries stay on this device";
+        $("connection-label").textContent = location.hostname === "github.io" || location.hostname.endsWith(".github.io")
+          ? "GitHub Pages"
+          : "Browser dashboard";
+      } else {
+        $("connection-label").textContent = "Local project";
+      }
       const inScope = (row) => {
         const date = new Date(row.createdAt);
         const floor = new Date(now.getFullYear(), now.getMonth(), now.getDate() - selectedDays + 1);
@@ -622,6 +632,23 @@
         modal.classList.remove("open");
         $("open-modal").focus();
       }
+      async function saveUsageRows(rows) {
+        if (isLocalDashboard) {
+          const response = await fetch("/api/usage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ format: "promptwise-usage", version: 1, usage: rows })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "The local dashboard could not save usage.");
+          committedRows = validateBackup(result);
+          savedRows = [];
+          localStorage.removeItem("promptwise-usage-v1");
+          return;
+        }
+        localStorage.setItem("promptwise-usage-v1", JSON.stringify(rows));
+        savedRows = rows;
+      }
       $("open-modal").addEventListener("click", () => {
         modal.classList.add("open");
         $("entry-model").focus();
@@ -630,7 +657,7 @@
       $("cancel-modal").addEventListener("click", closeModal);
       modal.addEventListener("click", (event) => { if (event.target === modal) closeModal(); });
       document.addEventListener("keydown", (event) => { if (event.key === "Escape" && modal.classList.contains("open")) closeModal(); });
-      $("usage-form").addEventListener("submit", (event) => {
+      $("usage-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const model = $("entry-model").value.trim();
         const inputTokens = Number($("entry-input").value);
@@ -650,19 +677,17 @@
           showToast("Enter a project, model, and valid token and cost values.");
           return;
         }
-        const updatedRows = [...savedRows, record];
         try {
-          localStorage.setItem("promptwise-usage-v1", JSON.stringify(updatedRows));
-          savedRows = updatedRows;
+          await saveUsageRows(mergeRows(getAllRows(), [record]));
         } catch (error) {
-          console.error("Could not save usage to local storage.", error);
-          showToast("Could not save this run in your browser storage.");
+          console.error("Could not save usage.", error);
+          showToast(error.message || "Could not save this model run.");
           return;
         }
         closeModal();
         render();
         $("usage-form").reset();
-        showToast("Usage saved to this browser.");
+        showToast(isLocalDashboard ? "Usage saved to data/usage.json in this project." : "Usage saved to this browser.");
       });
 
       let toastTimer;
@@ -741,8 +766,7 @@
         try {
           const importedRows = validateBackup(JSON.parse(await file.text()));
           const updatedRows = mergeRows(getAllRows(), importedRows);
-          localStorage.setItem("promptwise-usage-v1", JSON.stringify(updatedRows));
-          savedRows = updatedRows;
+          await saveUsageRows(updatedRows);
           render();
           showToast(`Restored ${importedRows.length} rows; ${updatedRows.length} total rows are available.`);
         } catch (error) {

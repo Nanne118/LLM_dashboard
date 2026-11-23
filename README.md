@@ -1,36 +1,32 @@
 # Promptwise LLM usage dashboard
 
-A static, local-first dashboard for comparing LLM usage by project, model, and execution type (local or subscription).
+A small local dashboard for tracking LLM runs by project, model, and local-versus-subscription usage. It uses Python's standard library; no packages or VS Code extension are needed.
 
-## What it does
+## The simple workflow
 
-- Shows token totals, estimated costs, local-versus-hosted usage, and tokens per estimated dollar.
-- Filters usage by project and date range; compares models and recent runs.
-- Lets you manually log a model run in the browser and export filtered CSV.
-- Backs up and restores all usage as versioned JSON.
-- Loads the committed `data/usage.json` file when hosted on GitHub Pages.
+1. Open this repository folder in VS Code.
+2. Press **Ctrl+Shift+P**, choose **Tasks: Run Task**, then run **Promptwise: Open local dashboard**. The dashboard opens in your browser.
+3. Use **Log usage**. When the dashboard is running locally, each run is saved directly to `data/usage.json` in this folder.
+4. When you want a GitHub backup, press **Ctrl+Shift+P**, choose **Tasks: Run Task**, then run **Promptwise: Back up usage to GitHub**. It commits the usage file and pushes it using your normal GitHub sign-in. The dashboard on GitHub Pages updates after the push.
+5. To stop the local dashboard, press **Ctrl+C** in its VS Code terminal.
 
-The dashboard does not connect to LLM providers or report actual bills automatically. Costs are estimates you enter; token efficiency alone does not measure answer quality.
+The GitHub backup task stages and commits only `data/usage.json` (not other uncommitted files), then pushes the current branch. Any other commits already waiting on that branch will also be pushed. Git must be installed and this repository must already be connected to GitHub. If GitHub asks you to sign in, use VS Code's Accounts menu or Git Credential Manager—do not put a personal access token in this project.
+
+You can still use the dashboard without the local server by opening `index.html` directly or visiting GitHub Pages. In those cases, newly logged runs are stored only in that browser. Use **Backup** to download JSON or **Restore** to load a backup. To publish those runs, open the repository's local dashboard and restore the JSON there before running the GitHub backup task.
 
 ## Publish with GitHub Pages
 
-1. Push this repository to GitHub with the dashboard on the `main` branch.
-2. In the repository, open **Settings → Pages** and set the build and deployment source to **GitHub Actions**.
-3. Open **Actions** and allow workflows if GitHub prompts you. The Pages workflow deploys on pushes to `main`; you can also start it with **Run workflow**.
-4. When the deployment finishes, open the Pages URL shown in the workflow summary.
+1. Push the repository to GitHub on the `main` branch.
+2. In **Settings → Pages**, choose **GitHub Actions** as the deployment source.
+3. Each push to `main` uploads the site artifact in a build job and deploys that same artifact in a separate job. The **Actions** tab shows both steps and the Pages URL.
 
-No build tools or package installation are needed; the site is plain HTML, CSS, and JavaScript.
+The workflow deliberately builds the artifact before deploying it. If an earlier run failed with “No artifacts named `github-pages` were found”, push this updated workflow to `main` to start a fresh run; do not just retry the old deployment job.
 
-## Back up and restore usage
+## Data and privacy
 
-1. Use **Backup** in the dashboard to download a `promptwise-usage-YYYY-MM-DD.json` file. It contains all usage rows available in the dashboard, not only the current filters.
-2. Copy the backup's `usage` records into `data/usage.json` (keeping the `format` and `version` fields), then commit and push that file. The Pages workflow republishes it, and the dashboard reads it from the repository.
-3. Use **Restore** to merge a downloaded Promptwise backup into the current browser's local data. Duplicate record IDs are merged rather than added twice.
-4. Exported CSV is for analysis; use the JSON backup to restore or publish dashboard data.
+The site does not connect to LLM providers or report actual bills automatically. Enter the token counts and estimated run cost yourself; token efficiency alone does not measure answer quality. Subscription fees may be flat, and local inference still has energy and hardware costs.
 
-The static site cannot write changes back to GitHub. Logging a run saves it only in that browser; download and commit a JSON backup to share it across devices and preserve it in the repository. Never put GitHub tokens, API keys, prompts, or other secrets in this site or in usage records.
-
-**Privacy:** a public repository and its GitHub Pages site expose committed `data/usage.json` contents to everyone. Use a private repository if project names, model choices, or usage patterns should not be public, and confirm your GitHub Pages access settings before publishing.
+The local dashboard listens only on your own computer (`127.0.0.1`) and saves records to `data/usage.json`. The backup task uses your existing Git sign-in and never needs a GitHub token in the browser. A public repository and its Pages site expose committed usage data, including project names and model choices. Do not record prompts, API keys, or other secrets, and use a private repository if this metadata should not be public.
 
 ## Usage data format
 
